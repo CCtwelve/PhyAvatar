@@ -1,0 +1,5 @@
+models/gaussians/diff-gaussian-rasterization/
+models/gaussians/simple-knn
+wandb
+result
+

@@ -1,0 +1,93 @@
+mode: gs_optimize_gtmask_T_L1mask_T
+supplement: gt_mask_T_L1_mask_T_view_17
+
+# train parameter
+train:
+  dataset: DatasetActorsHQ
+  subject_name: actor01
+  data:
+    data_dir: /mnt/cvda/cvda_phava/dataset/Actor01/Sequence1
+    frame_range: &id001
+      - 460
+      - 461
+      - 1
+    used_cam_ids: [23, 38, 39, 54, 56, 77, 79, 93, 95, 110, 126, 127, 128, 135, 152, 159, 160]
+#    used_cam_ids: [5, 6, 7, 8, 21, 22, 23, 24, 37, 38, 39, 40, 53, 54, 55, 56, 77, 78, 79, 80, 93, 94, 95, 96, 109, 110, 111, 112, 126, 127, 131, 132, 135, 136, 139, 140, 143, 144, 147, 148, 151, 152, 155, 156, 159, 160]
+
+  loss:
+    lamda_L1: 1.0
+    lamda_ellipsoid: 1
+    lamda_lpips: 1
+    lamda_L1_mask: 1
+    lamda_ssim: 1 
+    gt_mask: True  # add gt_mask to render_rbg
+
+  # gs ellipsoidal regularization
+  aniso_thres : 1
+  max_scale : 0.1
+
+  testing_iterations: [7_000, 30_000]
+  saving_iterations: [7_000, 30_000]
+
+  batch_size: 1
+
+  checkpoint: ''
+
+  save_path : /mnt/cvda/cvda_phava/code/Han/PhyAvatar/result/actor01
+
+  # reduce
+  prune_dead_points : False
+
+  # parser.add_argument("--posted_gs_path",type=str  ,default='/mnt/cvda/cvda_phava/code/Han/LHM/gs_result/2025-07-29 12:31:20/0_0_1753763482.ply')
+
+# gs default paramete
+OptimizationParams:
+  iterations : 60_000
+  # 0.00016
+  position_lr_init : 0.00016
+  position_lr_final : 0.0000016
+  position_lr_delay_mult : 0.01
+  position_lr_max_steps : 30_000
+  feature_lr : 0.0025
+  opacity_lr : 0.025
+  scaling_lr : 0.005
+  rotation_lr : 0.001
+  percent_dense : 0.01
+  lambda_dssim : 0.2
+  # del scale
+  scale_reset_interval : 1
+
+  opacity_reset_interval : 3000
+  # 100
+  densification_interval : 300
+  # 500
+  densify_final_iter : 30_000
+  densify_from_iter : 500
+   # 0.0002
+  densify_grad_threshold : 0.0001
+  # 15_00  3_000
+  densify_until_iter : 3_0000
+  lpips_loss_weight : False
+  random_background : False
+  spatial_lr_scale : 10  # control xyz
+  optimizer_type : "default"
+
+  reduce_gs : False
+
+PipelineParamsNoparse:
+    convert_SHs_python :  False
+    compute_cov3D_python : False
+    debug : False
+    antialiasing : False
+
+ModelParams:
+    max_sh_degree : 0
+    source_path : ""
+    model_path : ""
+    images : "images"
+    depths : ""
+    resolution : -1
+    white_background : False
+    train_test_exp : False
+    data_device : "cuda"
+    eval : False
