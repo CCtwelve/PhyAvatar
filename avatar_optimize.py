@@ -398,7 +398,7 @@ def training_report(
 
     test_loss /= views_num
     L1 /= views_num
-    ellipsis /= views_num
+    ellipsoid_loss /= views_num
     lpips_loss /= views_num
     L1_mask /= views_num
     Lssim /= views_num
@@ -409,7 +409,7 @@ def training_report(
                 {
                     "total_loss": test_loss.detach().item(),
                     "L1": L1.detach().item(),
-                    "ellipsoid_loss": ellipsis.detach().item(),
+                    "ellipsoid_loss": ellipsoid_loss.detach().item(),
                     "lpips_loss": lpips_loss.detach().item(),
                     "L1_mask": L1_mask.detach().item(),
                     "Lssim": Lssim.detach().item(),
