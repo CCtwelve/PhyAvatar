@@ -3,3 +3,4 @@ models/gaussians/simple-knn
 wandb
 result
 
+utils/smplx_model/SMPLX_NEUTRAL.npz
