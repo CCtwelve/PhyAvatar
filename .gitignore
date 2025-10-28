@@ -1,5 +1,7 @@
 models/gaussians/diff-gaussian-rasterization/
 models/gaussians/simple-knn
+ActorsHQ-for-Gaussian-Garments
 result
 *.ply
 utils/smplx_model/SMPLX_NEUTRAL.npz
+wandb
