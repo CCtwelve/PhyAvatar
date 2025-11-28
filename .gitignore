@@ -1,7 +1,45 @@
-models/gaussians/diff-gaussian-rasterization/
-models/gaussians/simple-knn
-ActorsHQ-for-Gaussian-Garments
-result
+# --- Python & System ---
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# --- IDE Configs ---
+.vscode/
+.idea/
+.cursor-server/
+
+# --- BIG FILES (一定要忽略) ---
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
 *.ply
-utils/smplx_model/SMPLX_NEUTRAL.npz
-wandb
+*.db
+*.npz
+*.txt
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.webp
+*.svg
+*.mp4
+
+
+
+# --- Heavy Directories ---
+models/gaussians/diff-gaussian-rasterization/
+models/gaussians/simple-knn/
+models/models--krahets--Diffuman4D/
+models/network/
+result/
+wandb/
+output/
+outputs/
+logs/
+ActorsHQ-for-Gaussian-Garments

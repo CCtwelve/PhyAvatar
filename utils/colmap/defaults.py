@@ -23,7 +23,7 @@ DEFAULTS['data_root'] = Path(f'')
 # This is required so that stage1 outputs can be written to this path in a format
 # that can then be read by subsequent stages of Gaussian-Garments pipeline.
 # This should be the same as the output_root set in Gaussian Garments defaults file.
-DEFAULTS['output_root'] = Path(f'')
+DEFAULTS['output_root'] = Path(f'/mnt/cvda/cvda_phava/dataset/Actor01/Sequence1/4x/colmap')
 
 
 # Path to where the ActorsHQ model files are stored. This directory should 

@@ -1,0 +1,109 @@
+mode: "0013_01"
+supplement: 
+
+train_type : "gs"
+ref_gs_path: /mnt/cvda/cvda_phava/code/Han/Diffuman4D/exports/splat/splat.ply
+
+# train_type : "pcd"
+# ref_gs_path: /mnt/cvda/cvda_phava/code/Han/Diffuman4D/data/datasets--krahets--diffuman4d_example/0013_01/sparse_pcd.ply
+
+train_py: "train.py"
+loss_py: "loss_util.py"
+# train parameter
+is_stage : True
+
+trans_json_path : /mnt/cvda/cvda_phava/code/Han/Diffuman4D/outputs/0013_01/splatfacto/2025-11-02_031608/dataparser_transforms.json
+
+
+train:
+  save_path : ./result/DNA-Rendering/0013_01
+  dataset: DatasetDNARendering
+  subject_name: 0013_01
+  data:
+    data_dir: /mnt/cvda/cvda_phava/code/Han/Diffuman4D/output/results/demo_3d/0013_01
+    frame_range: &id001
+      - 0
+      - 1
+      - 1
+    used_cam_ids: 48
+    test_cam_ids: [0]
+
+  # plot loss
+  use_wandb: False
+  use_plot: False  # local storage
+  use_tensorboard: True 
+
+  loss:  # render loss 
+    lamda_L1: 0.8
+    lamda_ssim: 0.2
+    lamda_ellipsoid: 0
+    lamda_scale: 1
+    lamda_lpips: 0.2
+    lamda_l1mask: 1
+    lamda_l1mask_list: [100, 10, 10]
+    lamda_combined_mask: 0
+
+    lamda_opacity: 0
+    # gt_mask: False  # add gt_mask to render_rbg
+    use_invmask: Flase
+    use_invmask_rgb: Flase
+
+  # gs ellipsoidal regularization
+  aniso_thres : 1  # ellipsoid anisotropy threshold
+  max_scale : 0.1  # ellipsoid maximum scale
+
+  checkpoint: False # whether to use checkpoint
+
+
+# gs default paramete
+OptimizationParams:
+  iterations : 1
+  iterations_interval_list : [6_000, 30_000, 100_000] 
+  position_lr_init : 0.0016 # 0.00016
+  position_lr_final : 0.0000016
+  position_lr_delay_mult : 0.01
+  position_lr_max_steps : 30_000
+  feature_lr : 0.0025
+  opacity_lr : 0.025
+  scaling_lr : 0.005
+  rotation_lr : 0.001
+  percent_dense : 0.01
+  opacity_reset_interval : 1_000
+  densification_interval : 100
+  densify_from_iter : 10  # 500 
+  densify_grad_threshold : 0.0002  
+  densify_grad_threshold_list: [0.0004, 0.0004, 0.0002] 
+  densify_until_iter : 6_000
+  random_background : False
+  spatial_lr_scale : 0
+  optimizer_type : "default"
+
+
+  # custom parameters
+  log_save_interval: 1 # save image and ply every 1000 iterations
+  is_save_location: True
+  size_threshold : 20
+  opacity_prune_interval: 3_000
+  opacity_reset_interval_list: [1_000, 3_000, 3_000]
+  min_opacity : 0.005
+  min_opacity_interval_list: [0.05, 0.01, 0.01]
+  gaussian_dropout_rate : 0
+  opacity_noise_strength : 0
+
+PipelineParamsNoparse:
+    convert_SHs_python :  False
+    compute_cov3D_python : False
+    debug : False
+    antialiasing : False
+
+ModelParams:
+    max_sh_degree : 3
+    source_path : ""
+    model_path : ""
+    images : "images"
+    depths : ""
+    resolution : -1
+    white_background : False
+    train_test_exp : False
+    data_device : "cuda"
+    eval : False

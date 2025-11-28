@@ -1,6 +1,0 @@
-plyfile==1.0.3
-opencv_python==4.8.1.78
-pyyaml==6.0.2
-scipy==1.13.1
-matplotlib==3.5.0
-numpy==1.23.5

@@ -7,19 +7,21 @@
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
-#
-
+from scipy.spatial.transform import Rotation as R
+import json
 import torch
 import numpy as np
 import config
 from utils.general_util import inverse_sigmoid, get_expon_lr_func, build_rotation
 from plyfile import PlyData, PlyElement
 from utils.sh_util import RGB2SH ,SH2RGB
+from utils.graphics_util import BasicPointCloud
 from torch import nn
 import  math
 from utils.log_util import plot_statistics
 from simple_knn._C import distCUDA2
 from utils.general_util import strip_symmetric, build_scaling_rotation
+from scipy.spatial.transform import Rotation as R_scipy
 import os
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
@@ -235,6 +237,22 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
+    def fetchPly(self, path):
+        """
+        从PLY文件读取点云数据，返回BasicPointCloud对象
+        
+        Args:
+            path: PLY文件路径
+            
+        Returns:
+            BasicPointCloud: 包含points, colors, normals的命名元组
+        """
+        plydata = PlyData.read(path)
+        vertices = plydata['vertex']
+        positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
+        colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+        return BasicPointCloud(points=positions, colors=colors)
+
     def create_from_pcd(self, points, colors, spatial_lr_scale: float):
         self.spatial_lr_scale = spatial_lr_scale
 
@@ -266,43 +284,44 @@ class GaussianModel:
         self.opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def load_ply(self, path):
-
+    def load_ply(self, path, trans_json_path=None):
+        # 1. --- LOAD RAW DATA FROM PLY ---
         plydata = PlyData.read(path)
-
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
-                        np.asarray(plydata.elements[0]["z"])),  axis=1)
+                        np.asarray(plydata.elements[0]["z"])), axis=1)
+        
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
         features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
         features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
-        if self.max_sh_degree ==0:
-            extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest1_")]
-        else:
+
+        # [FIX for ValueError]: Handle max_sh_degree = 0 case
+        if self.max_sh_degree > 0:
             extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
-        extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
-        # assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
-        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
-        for idx, attr_name in enumerate(extra_f_names):
-            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
-        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+            extra_f_names = sorted(extra_f_names, key=lambda x: int(x.split('_')[-1]))
+            features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
+            for idx, attr_name in enumerate(extra_f_names):
+                features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+            features_extra = features_extra.reshape((xyz.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+        else:
+            features_extra = np.empty(shape=(xyz.shape[0], 3, 0))
 
         scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
-        scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
+        scale_names = sorted(scale_names, key=lambda x: int(x.split('_')[-1]))
         scales = np.zeros((xyz.shape[0], len(scale_names)))
         for idx, attr_name in enumerate(scale_names):
             scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
-        # print(scale_names,scales)
-        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
-        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
+
+        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot_")]
+        rot_names = sorted(rot_names, key=lambda x: int(x.split('_')[-1]))
         rots = np.zeros((xyz.shape[0], len(rot_names)))
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
+        # Convert final, transformed NumPy arrays to PyTorch tensors
         self.xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self.features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self.features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -313,6 +332,8 @@ class GaussianModel:
         self.active_sh_degree = self.max_sh_degree
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self.spatial_lr_scale = 1
+        
+        print("[load_ply] PLY data loading and all transformations are complete.")
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         # print(torch.all(viewspace_point_tensor.grad.max()),self.xyz_gradient_accum[update_filter].max(),self.denom[update_filter].max())
@@ -320,15 +341,9 @@ class GaussianModel:
 
         self.denom[update_filter] += 1
 
-    def densify_and_prune(self,args,iter, max_grad, min_opacity, extent, max_screen_size, radii):
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
-
-        data_dict = {
-            'grads': grads.detach().cpu().numpy()
-        }
-        os.makedirs(f"/mnt/cvda/cvda_phava/code/Han/PhyAvatar/result/grad_plot/{args.train.start_time}",exist_ok=True)
-        plot_statistics(data_dict,save_path=f'/mnt/cvda/cvda_phava/code/Han/PhyAvatar/result/grad_plot/{args.train.start_time}/gaussian_grad_{iter}.png')
 
         self.tmp_radii = radii
         self.densify_and_clone(grads, max_grad, extent)  # 对梯度高于 max_grad 且尺寸较小的高斯点进行克隆，在周围增加新点以捕捉细节

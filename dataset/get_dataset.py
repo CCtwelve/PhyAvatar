@@ -4,12 +4,13 @@
 # @Author  : jc Han
 # @help    :
 import glob
+import json
 import os
 import numpy as np
 import cv2 as cv
 import torch
 from torch.utils.data import Dataset
-from utils.graphics_util import getWorld2View2
+
 from scipy.spatial.transform import Rotation
 class DatasetBase(Dataset):
     @torch.no_grad()
@@ -18,47 +19,55 @@ class DatasetBase(Dataset):
         data_dir,
         frame_range = None,
         used_cam_ids = None,
-        training = True,
+        test_cam_ids = None,
     ):
         super(Dataset, self).__init__()
         print(data_dir,frame_range)
         self.data_dir = data_dir
-        self.training = training
 
         print(f'# Selected frame indices: range({frame_range[0]}, {frame_range[1]}, {frame_range[2]})')
         frame_range = range(frame_range[0], frame_range[1], frame_range[2])
         self.pose_list = list(frame_range)
 
-        if self.training:
-            if used_cam_ids is None:
-                self.used_cam_ids = list(range(self.view_num))
-            else:
-                self.used_cam_ids = used_cam_ids
-            print('# Used camera ids: ', self.used_cam_ids)
+        if isinstance(used_cam_ids, list):
+            self.used_cam_ids = used_cam_ids
+        else:
+            self.used_cam_ids = range(0,used_cam_ids)
 
-            self.data_list = []
-            for pose_idx in self.pose_list:
-                for view_idx in self.used_cam_ids:
-                    self.data_list.append((pose_idx, view_idx - 1 ))
+        if test_cam_ids is None:
+            self.test_cam_ids = []
+        else:
+            self.test_cam_ids = test_cam_ids
+
+        print('# Used camera ids: ', self.used_cam_ids)
+
+        self.train_data_list = []
+        for pose_idx in self.pose_list:
+            for view_idx in self.used_cam_ids:
+                self.train_data_list.append((pose_idx, view_idx))
+
+        self.test_data_list = []
+        for pose_idx in self.pose_list:
+            for view_idx in self.test_cam_ids:
+                self.test_data_list.append((pose_idx, view_idx))
 
         self.load_cam_data()
 
         self.getNerfppNorm()
 
     def __len__(self):
-        if self.training:
-            return len(self.data_list)
+        return len(self.train_data_list)
+
+    def getitem(self, index, mode="train",record=False):
+        if mode == "train":
+            pose_idx, view_idx = self.train_data_list[index]
         else:
-            return len(self.pose_list)
+            if len(self.test_cam_ids) == 0:
+                return []
+            else:
+                pose_idx, view_idx = self.test_data_list[index]
 
-    def __getitem__(self, index):
-        return self.getitem(index, self.training)
-
-    def getitem(self, index):
-
-        pose_idx, view_idx = self.data_list[index]
         data_idx = (pose_idx, view_idx)
-        # print('data index: (%d, %d)' % (pose_idx, view_idx))
 
         data_item = dict()
         data_item['item_idx'] = index
@@ -68,8 +77,9 @@ class DatasetBase(Dataset):
 
         color_img = (color_img / 255.).astype(np.float32)
 
-        boundary_mask_img, mask_img = self.get_boundary_mask(mask_img)
-        # print(self.radius)
+        if record:
+            print(pose_idx, view_idx,self.extr_mats[view_idx],self.cam_names[view_idx])
+
         data_item.update({
             'img_name': self.cam_names[view_idx],
             'img_h': color_img.shape[0],
@@ -78,12 +88,13 @@ class DatasetBase(Dataset):
             'intr': self.intr_mats[view_idx],
             'color_img': color_img,
             'mask_img': mask_img,
-            'boundary_mask_img': boundary_mask_img,
-            'ty':self.ty[view_idx],
             'radius':self.radius,
         })
 
         return data_item
+
+    def get_radius(self):
+        return self.radius
 
     @staticmethod
     def get_boundary_mask(mask, kernel_size = 5):
@@ -111,13 +122,13 @@ class DatasetActorsHQ(DatasetBase):
         data_dir,
         frame_range = None,
         used_cam_ids = None,
-        training = True
+        test_cam_ids = None,
     ):
         super(DatasetActorsHQ, self).__init__(
             data_dir,
             frame_range,
             used_cam_ids,
-            training
+            test_cam_ids,
         )
 
     def load_color_mask_images(self, pose_idx, view_idx):
@@ -132,7 +143,7 @@ class DatasetActorsHQ(DatasetBase):
         cam_names = []
         ty = []
         extr_mats = []
-        intr_mats = []
+        intr_mats = [] 
         img_widths = []
         img_heights = []
         with open(self.data_dir + '/4x/calibration.csv', "r", newline = "", encoding = 'utf-8') as fp:
@@ -158,6 +169,108 @@ class DatasetActorsHQ(DatasetBase):
 
         self.cam_names, self.img_widths, self.img_heights, self.extr_mats, self.intr_mats ,self.ty\
             = cam_names, img_widths, img_heights, extr_mats, intr_mats,ty
+
+    def getNerfppNorm(self):
+        def get_center_and_diag(cam_centers):
+            cam_centers = np.hstack(cam_centers)
+            avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
+            center = avg_cam_center
+            dist = np.linalg.norm(cam_centers - center, axis=0, keepdims=True)
+            diagonal = np.max(dist)
+            return center.flatten(), diagonal
+
+        cam_centers = []
+
+        for cam in self.extr_mats:
+            # W2C = getWorld2View2(cam.R, cam.T)
+            # C2W = np.linalg.inv(cam)
+            C2W = cam
+            cam_centers.append(C2W[:3, 3:4])
+
+        center, diagonal = get_center_and_diag(cam_centers)
+        radius = diagonal * 1.1
+        translate = -center
+        self.radius =radius
+        return {"translate": translate, "radius": radius}
+
+class DatasetDNARendering(DatasetBase):
+    def __init__(
+        self,
+        data_dir,
+        frame_range = None,
+        used_cam_ids = None,
+        test_cam_ids = None,
+    ):
+        super(DatasetDNARendering, self).__init__(
+            data_dir,
+            frame_range,
+            used_cam_ids,
+            test_cam_ids,
+        )
+
+    def load_color_mask_images(self, pose_idx, view_idx):
+        # cam_names is cam_label
+        cam_names = self.cam_names[view_idx]
+
+        color_img = cv.imread(self.data_dir + '/images/%s/%06d.jpg' % (cam_names, pose_idx), cv.IMREAD_UNCHANGED)
+        mask_img = cv.imread(self.data_dir + '/fmasks/%s/%06d.png' % (cam_names, pose_idx), cv.IMREAD_UNCHANGED)
+        return color_img, mask_img
+
+    def load_cam_data(self):
+        # 打开并加载 JSON 数据
+        json_path = self.data_dir +'/transforms.json'
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # 初始化用于存储相机数据的列表
+        cam_names = []
+        img_widths = []
+        img_heights = []
+        extr_mats = []
+        intr_mats = []
+
+        # 遍历 JSON 文件中的每一个相机 "frame"
+        for frame in data['frames']:
+            # 1. 提取基本信息
+            cam_names.append(frame['camera_label'])
+            img_widths.append(frame['w'])
+            img_heights.append(frame['h'])
+
+            # 2. 构建内参矩阵 (Intrinsic Matrix)
+            # JSON 中的焦距和主点已经是像素单位，可以直接使用
+            intr_mat = np.identity(3, dtype=np.float32)
+            intr_mat[0, 0] = frame['fl_x']
+            intr_mat[1, 1] = frame['fl_y']
+            intr_mat[0, 2] = frame['cx']
+            intr_mat[1, 2] = frame['cy']
+            intr_mats.append(intr_mat)
+
+            # k1 = frame['k1']
+            # k2 = frame['k2']
+            # p1 = frame['p1']
+            # p2 = frame['p2']
+
+            c2w_opengl_extr_mat = np.array(frame['transform_matrix'], dtype=np.float32)
+
+            c2w_opengl_extr_mat[:3, 1:3] *= -1
+
+            c2w_opencv_extr_mat = c2w_opengl_extr_mat
+
+            # trans_opencv_to_opengl = np.array([
+            #     [1,  0,  0,  0],
+            #     [0, -1,  0,  0],
+            #     [0,  0, -1,  0],
+            #     [0,  0,  0,  1]
+            # ], dtype=np.float32)
+
+            # c2w_opencv_extr_mat = trans_opencv_to_opengl @ c2w_opengl_extr_mat @ np.linalg.inv(trans_opencv_to_opengl)
+
+            # extr_mat = c2w_opengl_extr_mat @ trans_opencv_to_opengl
+
+            extr_mats.append(c2w_opencv_extr_mat)
+        
+        self.cam_names, self.img_widths, self.img_heights, self.extr_mats, self.intr_mats \
+            = cam_names, img_widths, img_heights, extr_mats, intr_mats
 
     def getNerfppNorm(self):
         def get_center_and_diag(cam_centers):

@@ -60,6 +60,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.pyplot as plt
 
+# 导入save_images函数
+from utils.other_util import save_images
+import os
+from torch.utils.tensorboard import SummaryWriter
+import wandb
+
 
 def plot_statistics(data_dict, save_path='statistics_plot.png'):
     """
@@ -272,3 +278,196 @@ def plot_statistics(data_dict, save_path='statistics_plot.png'):
 
 # 调用函数绘制图表
 # plot_statistics_with_annotations(max_scales, opacities, 'gaussian_analysis.png')
+
+
+def create_log_dir(save_path, args, config_path):
+    """
+    创建日志目录并返回路径
+    
+    Args:
+        save_path: 基础保存路径
+        args: 参数对象
+        config_path: 配置文件路径
+    
+    Returns:
+        tuple: (save_path, log_path, result_path)
+    """
+    # 创建保存路径
+    full_save_path = os.path.join(save_path, f"{args.mode}")
+    os.makedirs(full_save_path, exist_ok=True)
+    
+    # 创建日志路径
+    log_path = os.path.join(full_save_path, "log.txt")
+    
+    # 创建结果路径
+    result_path = os.path.join(full_save_path, "result")
+    os.makedirs(result_path, exist_ok=True)
+    
+    return full_save_path, log_path, result_path
+
+
+def initialize_logging(tps, args, save_path):
+    """
+    初始化日志系统（tensorboard, wandb等）
+    
+    Args:
+        tps: 训练参数对象
+        args: 参数对象
+        save_path: 保存路径
+    """
+    # 初始化tensorboard writer
+    if getattr(tps, 'use_tensorboard', False):
+        tps.tb_writer = SummaryWriter(log_dir=os.path.join(save_path, 'tensorboard'))
+    else:
+        tps.tb_writer = None
+    
+    # 初始化wandb（如果可用）
+    if getattr(tps, 'use_wandb', False) and wandb is not None:
+        try:
+            wandb.init(
+                project="PhyAvatar",
+                name=args.mode,
+                config=vars(args),
+                dir=save_path
+            )
+            tps.wandb_run = wandb.run
+        except Exception as e:
+            print(f"Wandb初始化失败: {e}")
+            tps.wandb_run = None
+    else:
+        tps.wandb_run = None
+
+
+def cleanup_logging(tps):
+    """
+    清理日志系统
+    
+    Args:
+        tps: 训练参数对象
+    """
+    if tps.tb_writer is not None:
+        tps.tb_writer.close()
+    
+    if tps.wandb_run is not None:
+        wandb.finish()
+
+
+def log_training_metrics(tps, iteration, test_loss, L1, ellipsoid_loss, lpips_loss, l1_mask_loss, ssim, psnr_val, opacity_loss, scale_loss, mode):
+    """
+    记录训练指标到各种日志系统
+    
+    Args:
+        tps: 训练参数对象
+        iteration: 当前迭代次数
+        test_loss: 测试损失
+        L1: L1损失
+        ellipsoid_loss: 椭球损失
+        lpips_loss: LPIPS损失
+        l1_mask_loss: L1掩码损失
+        ssim: SSIM值
+        psnr_val: PSNR值
+        opacity_loss: 不透明度损失
+        scale_loss: 尺度损失
+        mode: 模式名称
+    """
+    def to_scalar(x):
+        try:
+            import torch
+            import numpy as np
+            if isinstance(x, torch.Tensor):
+                if x.numel() == 1:
+                    return x.item()
+                return x.detach().mean().item()
+            if isinstance(x, np.ndarray):
+                return float(x.mean())
+            return float(x)
+        except Exception:
+            # 兜底：直接返回原值（若TB/W&B不能接受，会在上层暴露）
+            return x
+
+    # TensorBoard日志
+    if tps.tb_writer is not None:
+        tps.tb_writer.add_scalar("test_loss/total_loss", to_scalar(test_loss), iteration)
+        tps.tb_writer.add_scalar("test_loss/L1", to_scalar(L1), iteration)
+        tps.tb_writer.add_scalar("test_loss/ellipsoid_loss", to_scalar(ellipsoid_loss), iteration)
+        tps.tb_writer.add_scalar("test_loss/lpips_loss", to_scalar(lpips_loss), iteration)
+        tps.tb_writer.add_scalar("test_loss/l1_mask_loss", to_scalar(l1_mask_loss), iteration)
+        tps.tb_writer.add_scalar("test_loss/ssim", to_scalar(ssim), iteration)
+        tps.tb_writer.add_scalar("test_loss/psnr", to_scalar(psnr_val), iteration)
+        tps.tb_writer.add_scalar("test_loss/opacity_loss", to_scalar(opacity_loss), iteration)
+        tps.tb_writer.add_scalar("test_loss/scale_loss", to_scalar(scale_loss), iteration)
+    
+    # Wandb日志
+    if tps.wandb_run is not None:
+        wandb.log({
+            "iteration": iteration,
+            "test_loss": to_scalar(test_loss),
+            "L1": to_scalar(L1),
+            "ellipsoid_loss": to_scalar(ellipsoid_loss),
+            "lpips_loss": to_scalar(lpips_loss),
+            "l1_mask_loss": to_scalar(l1_mask_loss),
+            "ssim": to_scalar(ssim),
+            "psnr": to_scalar(psnr_val),
+            "opacity_loss": to_scalar(opacity_loss),
+            "scale_loss": to_scalar(scale_loss),
+            "mode": mode
+        })
+
+
+def append_to_log(log_path, message):
+    """
+    追加消息到日志文件
+    
+    Args:
+        log_path: 日志文件路径
+        message: 要记录的消息
+    """
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(f"{message}\n")
+def create_mask_overlay(gt_mask: np.ndarray, render_alpha: np.ndarray) -> np.ndarray:
+    """
+    Creates a color overlay to visualize the difference between two masks.
+
+    It assigns the ground truth mask to the red channel and the rendered alpha
+    mask to the blue channel of a new RGB image.
+
+    Args:
+        gt_mask (np.ndarray): The ground truth mask, expected to be a 2D array
+                              with float values in the range [0, 1].
+        render_alpha (np.ndarray): The rendered alpha mask, expected to be a 2D
+                                   array with the same shape as gt_mask and
+                                   float values in the range [0, 1].
+
+    Returns:
+        np.ndarray: An RGB image (H, W, 3) as a uint8 NumPy array where:
+                    - Red channel corresponds to gt_mask.
+                    - Blue channel corresponds to render_alpha.
+                    - Magenta indicates overlap.
+    """
+
+    
+    # --- Input Validation ---
+    if gt_mask.shape != render_alpha.shape:
+        raise ValueError("Input masks must have the same shape.")
+    if gt_mask.ndim != 2:
+        raise ValueError("Input masks must be 2D single-channel arrays.")
+
+    h, w = gt_mask.shape
+
+    # --- Create Canvas ---
+    # Create a black RGB canvas of type uint8 (0-255)
+    overlay_image = np.zeros((h, w, 3), dtype=np.uint8)
+
+    # --- Normalize and Convert Masks ---
+    # Convert the float masks [0, 1] to uint8 masks [0, 255]
+    gt_mask_u8 = (gt_mask * 255).astype(np.uint8)
+    render_alpha_u8 = (render_alpha * 255).astype(np.uint8)
+
+    # --- Assign Channels ---
+    # Assign gt_mask to the Red channel (index 0)
+    overlay_image[:, :, 0] = gt_mask_u8
+    
+    # Assign render_alpha to the Blue channel (index 2)
+    overlay_image[:, :, 2] = render_alpha_u8
+
+    return overlay_image

@@ -36,40 +36,77 @@ def dict_to_namespace(d):
 
 
 
-def save_images(image_path,data_dict,img_name = None, iteration=None,) -> np.ndarray:
-    images = []
+import cv2 as cv # Make sure to import cv2
+import torch
+import numpy as np
 
+def save_images(image_path, data_dict, img_name=None, iteration=None) -> np.ndarray:
+    if not data_dict:
+        print("Warning: data_dict is empty. Nothing to save.")
+        return
+
+    processed_images = []
+
+    # --- Step 1: Convert all images to NumPy arrays first ---
+    # This loop processes tensors and gets them ready for padding.
     for key, value in data_dict.items():
-
-
         if not (isinstance(value, (torch.Tensor, np.ndarray)) and len(value.shape) >= 2):
-            print("data error")
+            print(f"Warning: Item '{key}' is not a valid image array. Skipping.")
             continue
 
-        if isinstance(value, torch.Tensor):
-            if value.is_cuda:
-                value = value.permute(1, 2, 0).detach().cpu()
-            img_np = value.detach().cpu().numpy()
+        img_np = value
+        if isinstance(img_np, torch.Tensor):
+            # PyTorch format is often (C, H, W), so permute to (H, W, C) for image processing
+            if len(img_np.shape) == 3:
+                img_np = img_np.permute(1, 2, 0)
+            img_np = img_np.detach().cpu().numpy()
 
-        if img_np.max() <= 1.0:
-            img_np  = ( img_np * 255).astype(np.uint8)
-        if img_np.shape[-1] == 1:  # 如果是单通道
-            img_np = np.repeat(img_np, 3, axis=-1)  # 复制为三通道
+        # Normalize to 0-255 range if they are floats (0.0 to 1.0)
+        if img_np.max() <= 1.0 and img_np.dtype != np.uint8:
+            img_np = (img_np * 255).astype(np.uint8)
+        else:
+            img_np = img_np.astype(np.uint8)
+        
+        # If image is grayscale (single channel), convert to 3-channel
+        if len(img_np.shape) == 2: # This handles (H, W) case
+            img_np = np.stack([img_np] * 3, axis=-1)
+        elif img_np.shape[-1] == 1: # This handles (H, W, 1) case
+            img_np = np.repeat(img_np, 3, axis=-1)
 
-        if img_np.shape[0] != 1022  or img_np.shape[1] != 747 :
-            # 创建新图像（RGB模式，黑色背景）
-            padded_img = np.zeros((1022, 747,3), dtype=img_np.dtype)
+        processed_images.append(img_np)
 
-            start_x = (747 - img_np.shape[1]) // 2
-            start_y = (1022 - img_np.shape[0]) // 2
+    if not processed_images:
+        print("Warning: No valid images found to process.")
+        return
 
-            padded_img[start_y:start_y + img_np.shape[0],
-            start_x:start_x + img_np.shape[1]] = img_np
-            img_np = padded_img
+    # --- Step 2: Find the maximum height among all processed images ---
+    max_height = max(img.shape[0] for img in processed_images)
 
-        images.append(img_np)
+    # --- Step 3: Pad each image to match the max height ---
+    padded_images = []
+    for img_np in processed_images:
+        current_height = img_np.shape[0]
+        if current_height < max_height:
+            # Calculate padding for top and bottom to center the image
+            total_pad = max_height - current_height
+            pad_top = total_pad // 2
+            pad_bottom = total_pad - pad_top
+            
+            # Use np.pad for a clean and efficient way to pad the image
+            # The format is ((top, bottom), (left, right), (channel_top, channel_bottom))
+            padded_img = np.pad(img_np, ((pad_top, pad_bottom), (0, 0), (0, 0)), 
+                                mode='constant', constant_values=0)
+            padded_images.append(padded_img)
+        else:
+            # If the image is already at max height, no padding is needed
+            padded_images.append(img_np)
 
-    combined_img = np.concatenate(images, axis=1)
+    # --- Step 4: Combine the perfectly aligned images and save ---
+    combined_img = np.concatenate(padded_images, axis=1)
 
-    cv.imwrite(f"{image_path}/{img_name}_{iteration}.jpg", combined_img)
+    # Convert from RGB (for processing) to BGR (for OpenCV saving)
+    # combined_img_bgr = cv.cvtColor(combined_img, cv.COLOR_RGB)
 
+    output_filename = f"{image_path}/{img_name}_{iteration}.jpg"
+    cv.imwrite(output_filename, combined_img)
+    # print(f"Successfully saved combined image to {output_filename}") # Optional: for debugging

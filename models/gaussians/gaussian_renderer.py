@@ -105,21 +105,15 @@ class Camera:
         height,
         width,
         view_id,
-        ty  ,
-        trans=np.array([0.0, 0.0, 0.0]),
-        scale=1.0,
     ) -> None:
         self.FoVx = FoVx
         self.FoVy = FoVy
         self.height = height
         self.width = width
         self.world_view_transform = w2c.transpose(0, 1)
-        self.ty =ty
         self.zfar = 100.0
         self.znear = 0.01
         self.view_id=view_id
-        self.trans = trans
-        self.scale = scale
 
         self.projection_matrix = (
             getProjectionMatrix(
@@ -138,7 +132,7 @@ class Camera:
         self.intrinsic = intrinsic
 
     @staticmethod
-    def from_c2w(c2w, intrinsic, height, width,view_id,ty):
+    def from_c2w(c2w, intrinsic, height, width,view_id):
         w2c = torch.inverse(c2w)
         FoVx, FoVy = intrinsic_to_fov(
             intrinsic,
@@ -153,7 +147,6 @@ class Camera:
             height=height,
             width=width,
             view_id=view_id,
-            ty=ty
         )
 
 
@@ -165,7 +158,6 @@ def render(
     scaling_modifier=1.0,
     override_color=None,
     separate_sh=False,
-
 ):
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -255,10 +247,10 @@ def render(
         )
     # print(" rendered_image", rendered_image.shape, rendered_image.device)
     ret = {
-        "comp_rgb": rendered_image[[2, 1, 0], ...].clamp(0, 1),  # BGR→RGB [3, H, W]
-        "comp_rgb_bg": bg_color,
-        "comp_mask": rendered_alpha.clamp(0, 1),
-        "comp_depth": rendered_depth,
+        "render_rgb": rendered_image[[2, 1, 0], ...].clamp(0, 1),  # BGR→RGB [3, H, W]
+        "render_rgb_bg": bg_color,
+        "render_alpha": rendered_alpha.clamp(0, 1),
+        "render_depth": rendered_depth,
         "radii":radii, #  高斯点在屏幕空间的半径 # (N,)
         "visibility_filter": radii > 0, # 可见性过滤
         "viewspace_points": screenspace_points
