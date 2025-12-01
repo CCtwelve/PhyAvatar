@@ -167,10 +167,10 @@ def load_view_config(config_path: Path):
             raise ValueError(f"配置文件中缺少或格式错误: {key} (应为列表)")
         config[key] = values
 
-    # Extract args_config
-    args_obj = raw_cfg.get("args_config")
+    # Extract colmap_construction.py args (fallback to legacy key)
+    args_obj = raw_cfg.get("colmap_construction.py") or raw_cfg.get("args_config")
     if not isinstance(args_obj, dict):
-        raise ValueError(f"配置文件中缺少或格式错误: args_config (应为字典)")
+        raise ValueError("配置文件中缺少或格式错误: colmap_construction.py / args_config (应为字典)")
     args_override = args_obj.copy()
 
     file_type = "Python" if config_path.suffix == '.py' else "YAML"

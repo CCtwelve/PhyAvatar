@@ -8,13 +8,23 @@ from PIL import Image
 
 
 def _parse_color(color: str) -> tuple[int, int, int]:
-    color = color.strip()
-    if color.startswith("#"):
-        color = color[1:]
+    # Fire 可能会把参数解析成 int/其他类型，这里统一转成字符串
+    color = str(color).strip()
+    if not color:
+        color = "#000000"
+
+    # 允许不带 # 的简写，比如 "000" 或 "000000"
+    if not color.startswith("#"):
+        color = "#" + color
+
+    color = color[1:]
     if len(color) not in (3, 6):
-        raise ValueError(f"Unsupported color format: {color}")
+        # 长度不对时直接回退到黑色，避免抛异常
+        color = "000000"
+
     if len(color) == 3:
         color = "".join(ch * 2 for ch in color)
+
     r = int(color[0:2], 16)
     g = int(color[2:4], 16)
     b = int(color[4:6], 16)
@@ -34,6 +44,20 @@ def _gather_images(
         if path.is_file() and (extensions is None or path.suffix.lower() in extensions)
     ]
     return sorted(image_paths)
+
+
+def _normalize_to_sequence(value):
+    """Ensure CLI values (which Fire may coerce into scalars) behave like sequences."""
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        return [value]
+    try:
+        iter(value)  # type: ignore[arg-type]
+    except TypeError:
+        return [value]
+    # Fire might coerce lists into tuples; ensure we can append later
+    return list(value)  # type: ignore[arg-type]
 
 
 def build_skeleton_collage(
@@ -69,10 +93,11 @@ def build_skeleton_collage(
     primary_named_images = _open_images(images_dir)
     
     # Filter out excluded labels
-    if exclude_labels:
+    normalized_excludes = _normalize_to_sequence(exclude_labels)
+    if normalized_excludes:
         # Create a set of all possible formats for excluded labels
         exclude_set = set()
-        for label in exclude_labels:
+        for label in normalized_excludes:
             label_str = str(label)
             exclude_set.add(label_str)
             # Also add zero-padded format (e.g., "47" -> "47", "7" -> "07")

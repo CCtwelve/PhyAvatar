@@ -29,15 +29,16 @@ __pycache__/
 *.webp
 *.svg
 *.mp4
-
-
+*.ini
+demo.py
+check_loss.py
 
 # --- Heavy Directories ---
 models/gaussians/diff-gaussian-rasterization/
 models/gaussians/simple-knn/
 models/models--krahets--Diffuman4D/
 models/network/
-result/
+result*/
 wandb/
 output/
 outputs/

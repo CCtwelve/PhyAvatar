@@ -8,6 +8,27 @@ from glob import glob
 from PIL import Image
 from easyvolcap.utils.parallel_utils import parallel_execution
 
+try:
+    # 优先使用绝对导入（通过 PYTHONPATH=项目根）
+    from utils.gs_generation.preprocess.utils.process_utils import (
+        normalize_process_subdirs,
+    )
+except ModuleNotFoundError:
+    # 作为脚本直接运行时，退回到本地加载
+    import importlib.util
+    import os.path as osp
+
+    PREPROCESS_DIR = osp.dirname(osp.abspath(__file__))
+    UTILS_DIR = osp.join(PREPROCESS_DIR, "utils")
+    _process_utils_path = osp.join(UTILS_DIR, "process_utils.py")
+    _spec = importlib.util.spec_from_file_location(
+        "process_utils_local", _process_utils_path
+    )
+    _module = importlib.util.module_from_spec(_spec)
+    assert _spec.loader is not None
+    _spec.loader.exec_module(_module)
+    normalize_process_subdirs = _module.normalize_process_subdirs
+
 from sapiens.lite.demo.classes_and_palettes import (
     COCO_WHOLEBODY_KPTS_COLORS,
     COCO_WHOLEBODY_SKELETON_INFO,
@@ -183,8 +204,8 @@ def draw_skeleton(
     kp2d_dir: str,
     out_kpmap_dir: str,
     kp2d_score_dir: str | None = None,
-    kp2d_canvas_shape: tuple[int, int] =(1024,1024),
-    out_kpmap_shape: tuple[int, int] = (1024,1024),
+    kp2d_canvas_shape: tuple[int, int] = (1024, 1024),
+    out_kpmap_shape: tuple[int, int] = (1024, 1024),
     spa_labels: list[int] | None = None,
     tem_labels: list[int] | None = None,
     image_ext: str = ".webp",
@@ -194,8 +215,14 @@ def draw_skeleton(
     radius: float = 2.0,
     thickness: float = 2.0,
     draw_face_keypoints: bool = False,
+    process_subdirs: list[str] | str | None = None,
 ):
-    if spa_labels is None:
+    # 优先使用 process_subdirs（来自 index.txt 或 config），否则回退到 spa_labels / 全部子目录
+    normalized_subdirs = normalize_process_subdirs(process_subdirs)
+
+    if normalized_subdirs is not None:
+        spa_labels = normalized_subdirs
+    elif spa_labels is None:
         spa_labels = sorted(os.listdir(kp2d_dir))
     else:
         spa_labels = [f"{spa_label:02d}" for spa_label in spa_labels]

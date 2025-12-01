@@ -102,6 +102,7 @@ emit("RUN_VISUALIZE_CAMERAS_TRANSFORMS_NAME", visualize_cameras.get("transforms_
 emit("RUN_VISUALIZE_CAMERAS_SCALE", visualize_cameras.get("scale"))
 ns_train = section.get("ns_train") or {}
 emit("RUN_NS_TRAIN_DATA_DIR", ns_train.get("data_dir"))
+emit("RUN_NS_TRAIN_OUTPUT_DIR", ns_train.get("output_dir"))
 colmap2nerf = data.get("colmap2nerf_args") or {}
 emit("RUN_COLMAP2NERF_TARGET_DIR", colmap2nerf.get("target"))
 actions_envs = section.get("actions_envs") or {}
@@ -255,7 +256,55 @@ get_action_env() {
   printf '%s' "$value"
 }
 
-DEFAULT_DATADIR="${RUN_DEFAULT_DATADIR:?run_sh_config.default_datadir 未配置}"
+print_action_io() {
+  local action="$1"
+  case "$action" in
+    remove_background)
+      echo ">> IO [$action]: inputs=images:$DATADIR/images; outputs=fmasks:$DATADIR/fmasks"
+      ;;
+    predict_keypoints)
+      echo ">> IO [$action]: inputs=images:$DATADIR/images,fmasks:$DATADIR/fmasks; outputs=kp2d:$KP2D_DIR"
+      ;;
+    triangulate_skeleton)
+      echo ">> IO [$action]: inputs=camera:$TRANSFORM_PATH,kp2d:$KP2D_DIR; outputs=kp3d:$KP3D_DIR,pcd:$PCD_DIR,kp2d_proj:$KP2D_PROJ_DIR"
+      ;;
+    draw_skeleton)
+      echo ">> IO [$action]: input=kp2d_proj:$KP2D_PROJ_DIR; output=skeletons_gt:$DATADIR/skeletons_gt"
+      ;;
+    align_pose_pcd)
+      echo ">> IO [$action]: source=$DATADIR target=$ALIGN_POSE_TARGET_DIR output=$DATADIR"
+      ;;
+    project_pcd_skeletons)
+      echo ">> IO [$action]: inputs=pcd:$DATADIR/poses_pcd,camera:$DATADIR/transforms.json; output=skeletons:$DATADIR/skeletons"
+      ;;
+    overlay_skeletons)
+      echo ">> IO [$action]: inputs=images:$DATADIR/images,skeletons:$DATADIR/skeletons; outputs=overlay_project:$DATADIR/overlay_project_pcd,overlay_poses:$DATADIR/overlay_poses_sapiens"
+      ;;
+    collage)
+      echo ">> IO [$action]: inputs=skeletons:$DATADIR/skeletons,comparison:$COLLAGE_COMPARISON_DIR; output=${DATADIR}/skeletons_collage.webp"
+      ;;
+    sync_cameras)
+      echo ">> IO [$action]: operating_on=$DATADIR subdirs=images,fmasks,skeletons_gt:skeletons"
+      ;;
+    inference)
+      local inference_target_dir="${INFERENCE_RESULT_ROOT}/${INFERENCE_EXP}/${INFERENCE_SCENE_LABEL}"
+      echo ">> IO [$action]: input=$INFERENCE_DATA_DIR; output=$inference_target_dir"
+      ;;
+    ns_train)
+      echo ">> IO [$action]: data=$NS_TRAIN_DATA_DIR"
+      ;;
+    colmap2nerf)
+      echo ">> IO [$action]: target_dir=$COLMAP2NERF_TARGET_DIR"
+      ;;
+    colmap_construction)
+      echo ">> IO [$action]: data_root=$DATADIR"
+      ;;
+    *)
+      echo ">> IO [$action]: (no explicit IO paths configured)"
+      ;;
+  esac
+}
+
 predict_keypoints_view="${RUN_DEFAULT_PREDICT_KEYPOINTS_VIEW:?run_sh_config.default_predict_keypoints_view 未配置}"
 USE_ALIGN_POSE="${RUN_DEFAULT_USE_ALIGN_POSE:?run_sh_config.default_use_align_pose 未配置}"
 REMOVE_BACKGROUND_MODEL_NAME="${RUN_REMOVE_BACKGROUND_MODEL:?run_sh_config.remove_background.model_name 未配置}"
@@ -273,7 +322,9 @@ INFERENCE_RESULT_ROOT="${RUN_INFERENCE_RESULT_ROOT:?inference_result_root 未配
 INFERENCE_SCRIPT_PATH="${RUN_INFERENCE_SCRIPT_PATH:-inference.py}"
 VISUALIZE_CAMERAS_TRANSFORMS_NAME="${RUN_VISUALIZE_CAMERAS_TRANSFORMS_NAME:-transforms}"
 VISUALIZE_CAMERAS_SCALE="${RUN_VISUALIZE_CAMERAS_SCALE:-0.2}"
+DEFAULT_DATADIR="${RUN_DEFAULT_DATADIR:?run_sh_config.default_datadir 未配置}"
 NS_TRAIN_DATA_DIR="${RUN_NS_TRAIN_DATA_DIR:?run_sh_config.ns_train.data_dir 未配置}"
+NS_TRAIN_OUTPUT_DIR="${RUN_NS_TRAIN_OUTPUT_DIR:-}"
 COLMAP2NERF_TARGET_DIR="${RUN_COLMAP2NERF_TARGET_DIR:?colmap2nerf_args.target 未配置}"
 
 USE_ALIGN_POSE=$(to_lower "$USE_ALIGN_POSE")
@@ -291,6 +342,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --actions)
       IFS=',' read -r -a ACTIONS <<< "$2"
+      shift 2
+      ;;
+    --ns_train_output_dir)
+      NS_TRAIN_OUTPUT_DIR=$2
       shift 2
       ;;
     --use_align_pose)
@@ -331,6 +386,7 @@ fi
 
 if [ "$USE_ALIGN_POSE" = "true" ]; then
   PREP_ACTIONS=("remove_background" "predict_keypoints" "triangulate_skeleton" "draw_skeleton" "align_pose_pcd" "project_pcd_skeletons" "collage" "sync_cameras")
+  # PREP_ACTIONS=("collage" "sync_cameras")
 else
   PREP_ACTIONS=("remove_background" "predict_keypoints" "triangulate_skeleton" "draw_skeleton" "project_pcd_skeletons")
 fi
@@ -361,6 +417,7 @@ echo ">> Actions: ${ACTIONS[*]}"
 echo ">> Use align_pose_pcd: $USE_ALIGN_POSE (suffix: ${HQ_SUFFIX:-none})"
 
 for act in "${ACTIONS[@]}"; do
+  print_action_io "$act"
   echo ">> Running skeleton generation action: $act"
   case "$act" in
     colmap_construction)
@@ -407,7 +464,8 @@ for act in "${ACTIONS[@]}"; do
       conda activate "$(get_action_env 'draw_skeleton')"
       python "${SCRIPT_DIR}/preprocess/draw_skeleton.py" \
         --kp2d_dir "$KP2D_PROJ_DIR" \
-        --out_kpmap_dir "$DATADIR/skeletons_gt"
+        --out_kpmap_dir "$DATADIR/skeletons_gt" \
+        --process_subdirs "$predict_keypoints_view"
       ;;
     align_pose_pcd)
       if [ "$USE_ALIGN_POSE" != "true" ]; then
@@ -490,8 +548,8 @@ for act in "${ACTIONS[@]}"; do
       else
         echo ">> Warning: INFERENCE_RESULT_ROOT, INFERENCE_EXP, or INFERENCE_SCENE_LABEL is empty, skipping directory clearing."
       fi
-      # Switch to Diffuman4D project directory
-      DIFFUMAN4D_DIR="/mnt/cvda/cvda_phava/code/Han/Diffuman4D"
+      # Switch to Diffuman4D project directory (taken from inference_result_root in config)
+      DIFFUMAN4D_DIR="$INFERENCE_RESULT_ROOT"
       if [[ ! -d "$DIFFUMAN4D_DIR" ]]; then
         echo ">> Error: Diffuman4D directory not found: $DIFFUMAN4D_DIR"
         exit 1
@@ -499,29 +557,37 @@ for act in "${ACTIONS[@]}"; do
       ORIGINAL_DIR="$(pwd)"
       cd "$DIFFUMAN4D_DIR"
       echo ">> Changed to Diffuman4D directory: $DIFFUMAN4D_DIR"
-      python "inference.py" \
+      python "$INFERENCE_SCRIPT_PATH" \
         exp="$INFERENCE_EXP" \
         data.scene_label="$INFERENCE_SCENE_LABEL" \
         data.data_dir="$INFERENCE_DATA_DIR"
       cd "$ORIGINAL_DIR"
-      
-      # Copy poses_pcd/000000.ply to inference output directory as sparse_pcd.ply
-      SOURCE_PLY="$DATADIR/poses_pcd/000000.ply"
-      TARGET_PLY="$INFERENCE_TARGET_DIR/sparse_pcd.ply"
-      if [[ -f "$SOURCE_PLY" ]]; then
-        mkdir -p "$INFERENCE_TARGET_DIR"
-        cp "$SOURCE_PLY" "$TARGET_PLY"
-        echo ">> Copied $SOURCE_PLY to $TARGET_PLY"
-      else
-        echo ">> Warning: Source PLY file not found: $SOURCE_PLY"
-      fi
       ;;
     ns_train)
+      # Copy poses_pcd/000000.ply to inference output directory as sparse_pcd.ply
+      # Use NS_TRAIN_DATA_DIR which is already the full inference_result_path from config
+      if [[ -n "$NS_TRAIN_DATA_DIR" ]]; then
+        SOURCE_PLY="$DATADIR/poses_pcd/000000.ply"
+        TARGET_PLY="$NS_TRAIN_DATA_DIR/sparse_pcd.ply"
+        echo ">> Attempting to copy PLY file..."
+        echo ">> Source: $SOURCE_PLY"
+        echo ">> Target: $TARGET_PLY"
+        if [[ -f "$SOURCE_PLY" ]]; then
+          mkdir -p "$NS_TRAIN_DATA_DIR"
+          cp "$SOURCE_PLY" "$TARGET_PLY"
+          echo ">> Successfully copied $SOURCE_PLY to $TARGET_PLY"
+        else
+          echo ">> Warning: Source PLY file not found: $SOURCE_PLY"
+          echo ">> DATADIR is: $DATADIR"
+        fi
+      else
+        echo ">> Warning: NS_TRAIN_DATA_DIR is not configured, skipping PLY copy"
+      fi
+      
       # Visualize cameras before training
-      if [[ -n "$INFERENCE_RESULT_ROOT" && -n "$INFERENCE_EXP" && -n "$INFERENCE_SCENE_LABEL" ]]; then
-        INFERENCE_OUTPUT_DIR="${INFERENCE_RESULT_ROOT}/${INFERENCE_EXP}/${INFERENCE_SCENE_LABEL}"
-        TRANSFORMS_JSON="${INFERENCE_OUTPUT_DIR}/${VISUALIZE_CAMERAS_TRANSFORMS_NAME}.json"
-        OUTPUT_PLY="${INFERENCE_OUTPUT_DIR}/${VISUALIZE_CAMERAS_TRANSFORMS_NAME}.ply"
+      if [[ -n "$NS_TRAIN_DATA_DIR" ]]; then
+        TRANSFORMS_JSON="${NS_TRAIN_DATA_DIR}/${VISUALIZE_CAMERAS_TRANSFORMS_NAME}.json"
+        OUTPUT_PLY="${NS_TRAIN_DATA_DIR}/${VISUALIZE_CAMERAS_TRANSFORMS_NAME}.ply"
         
         if [[ -f "$TRANSFORMS_JSON" ]]; then
           echo ">> Visualizing cameras from $TRANSFORMS_JSON"
@@ -535,13 +601,18 @@ for act in "${ACTIONS[@]}"; do
           echo ">> Warning: Transforms JSON not found: $TRANSFORMS_JSON, skipping camera visualization"
         fi
       else
-        echo ">> Warning: Inference output directory not configured, skipping camera visualization"
+        echo ">> Warning: NS_TRAIN_DATA_DIR is not configured, skipping camera visualization"
       fi
       
       if [ -d "$NS_TRAIN_DATA_DIR" ]; then
         echo ">> Running ns-train splatfacto..."
         conda activate "$(get_action_env 'colmap2nerf')"
-        ns-train splatfacto --data "$NS_TRAIN_DATA_DIR"
+        ns_train_cmd=(ns-train splatfacto --data "$NS_TRAIN_DATA_DIR")
+        if [[ -n "$NS_TRAIN_OUTPUT_DIR" ]]; then
+          echo ">> ns-train output_dir: $NS_TRAIN_OUTPUT_DIR"
+          ns_train_cmd+=(--output-dir "$NS_TRAIN_OUTPUT_DIR")
+        fi
+        "${ns_train_cmd[@]}"
       else
         echo ">> Skip ns-train: data directory not found: $NS_TRAIN_DATA_DIR"
       fi
