@@ -1,31 +1,69 @@
 import os
 from os.path import join
 
+"""
+
+
+
+DNARender_4_2_DNA_48.py
+
+针对 DNARender 数据集的配置文件。
+
+与 ActorsHQ/HQ 配置的主要区别：
+- 数据直接来自 Diffuman4D 提供的 DNARender 数据集（diffuman4d_data_root / subject）
+- run_seg_clothes_DNA.sh 会先根据 frame_range 从该数据集中复制所需数据到
+  PhyAvatar 的 results/nerfstudio/filename（即 soft_path），然后复用
+  ns_export / data_preparation / ns_train_clothes 三个动作。
+"""
+
+# 为了避免写死绝对路径，这里统一从当前文件位置推导工程根目录
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+code_root = os.path.dirname(os.path.dirname(_THIS_DIR))  # .../PhyAvatar
+
 # ============================================================================
 # Base Configuration - Modify these only
 # ============================================================================
-# datasets_root = "/mnt/cvda/cvda_phava/dataset/Chunxun_local/ActorsHQ/tmp/actorshq"
-datasets_root = "/mnt/cvda/cvda_phava/dataset"
-code_root = "/mnt/cvda/cvda_phava/code/Han/PhyAvatar"
-inference_result_root = "/mnt/cvda/cvda_phava/code/Han/Diffuman4D"
-subject = "Actor01"
+# 相对于工程根目录的路径
+datasets_root = join(code_root, "..", "..", "..", "dataset")
+inference_result_root = join(code_root, "..", "Diffuman4D")
+
+# DNARender 数据标识
+subject = "0013_01"
+frame_range = "000077"  # 仅复制这一帧对应的图片 / json 等
+
+# 为了兼容现有 pipeline，这里仍然提供 sequence / resolution
 sequence = "Sequence1"
 resolution = "4x"
-filename = f"HQ_{subject}_4_2_48_70"
+
+# 用于标识当前场景 / 结果目录名
+filename = "DNARender_0013_01_4_2_48_70"
+
+# Diffuman4D 推理相关
 inference_exp = "demo_3d"
 inference_script = "inference.py"
-diffuman4d_data_root = "/mnt/cvda/cvda_phava/code/Han/Diffuman4D/data/datasets--krahets--diffuman4d_example"
+
+# DNARender 源数据根目录（相对 code_root 推导）
+diffuman4d_data_root = join(inference_result_root, "data", "datasets--krahets--diffuman4d_example")
 
 
 # Auto-built paths (don't modify!!!)
 colmap_path = join(code_root, "results", "colmap")
 nerfstudio_path = join(code_root, "results", "nerfstudio", filename)
 script_dir = join(code_root, "utils", "gs_generation")
-align_pose_target_dir = join(diffuman4d_data_root, "0013_01")
+
+# 对齐骨架等仍然直接使用 DNARender 源数据中的 subject 目录
+align_pose_target_dir = join(diffuman4d_data_root, subject)
 comparison_skeletons_dir = join(align_pose_target_dir, "skeletons")
 soft_link_path = join(code_root, "results", "nerfstudio")
+
+# 对于 DNARender，我们仍然保留 inference_result_path 的定义以兼容其它脚本，
+# 但 run_seg_clothes_DNA.sh 会直接使用 inference_soft_link_path/filename 来构造 soft_path。
 inference_result_path = join(inference_result_root, "output", "results", inference_exp, filename)
-inference_soft_link_path = join(code_root, "results","gs_generation")
+
+# DNARender 相关数据现在直接复制到 results/gs_generation 下（由 run_gen_human_DNA.sh 负责复制），
+# 这样与普通 HQ/ActorsHQ pipeline 的数据目录保持一致。
+# 注意：这里使用的是相对工程根目录的路径，避免写死绝对路径
+inference_soft_link_path = join(code_root, "results", "gs_generation")
 ns_train_output_path = join(code_root, "results", "nerf_result")
 seg_clothes_path = join(inference_result_path, "seg_clothes")
 
@@ -46,9 +84,26 @@ def _latest_subdir(parent: str) -> str:
     return entries[-1]
 
 
-_ns_train_base_dir = join(ns_train_output_path, filename,"splatfacto")
-_ns_train_latest =  _latest_subdir(_ns_train_base_dir)
-ns_train_yaml_path = join(_ns_train_base_dir, _ns_train_latest,"config.yml")
+# 对于 DNARender，训练输出默认在 outputs/ 目录下（nerfstudio 默认行为）
+# 优先从 outputs/ 目录读取，如果不存在则回退到 results/nerf_result/
+_ns_train_base_dir_outputs = join(code_root, "outputs", filename, "splatfacto")
+_ns_train_latest_outputs = _latest_subdir(_ns_train_base_dir_outputs)
+_ns_train_base_dir_fallback = join(ns_train_output_path, filename, "splatfacto")
+_ns_train_latest_fallback = _latest_subdir(_ns_train_base_dir_fallback)
+
+# 优先使用 outputs/ 目录下的训练结果
+if _ns_train_latest_outputs:
+    _ns_train_base_dir = _ns_train_base_dir_outputs
+    _ns_train_latest = _ns_train_latest_outputs
+elif _ns_train_latest_fallback:
+    _ns_train_base_dir = _ns_train_base_dir_fallback
+    _ns_train_latest = _ns_train_latest_fallback
+else:
+    # 如果都不存在，使用 outputs/ 作为默认路径（即使目录不存在，也会在训练时创建）
+    _ns_train_base_dir = _ns_train_base_dir_outputs
+    _ns_train_latest = _ns_train_latest_outputs if _ns_train_latest_outputs else "latest"
+
+ns_train_yaml_path = join(_ns_train_base_dir, _ns_train_latest, "config.yml")
 ns_export_gspath = join(_ns_train_base_dir, _ns_train_latest)
 
 # seg_clothes parameters
@@ -56,7 +111,7 @@ soft_path = join(inference_soft_link_path, filename)
 images_dir = join(soft_path, "images_alpha")
 masks_dir = join(soft_path, "fmasks")
 transforms_json = join(soft_path, "transforms.json")
-data_prep_output_root = join(soft_path,"seg_clothes", subject, sequence)
+data_prep_output_root = join(soft_path, "seg_clothes", subject, sequence)
 smplx_root = join(datasets_root, "body_models")
 actorshq_smplx_zip = join(datasets_root, subject, sequence, "ActorsHQ_smplx.zip")
 actorshq_smplx_del_path = join(data_prep_output_root, "ActorsHQ_smplx")
@@ -137,8 +192,13 @@ config = {
             "transforms_name": "transforms",
             "scale": 0.2,
         },
+        # 对 DNARender，我们希望 nerfstudio 直接读取由 run_seg_clothes_DNA.sh
+        # 复制到 PhyAvatar 工程下的 results/gs_generation/filename 目录中的数据，
+        # 而不是原始的 Diffuman4D/output/results/... 目录。
         "ns_train": {
-            "data_dir": inference_result_path,
+            # 原来是 inference_result_path (= Diffuman4D/output/results/demo_3d/filename)
+            # 这里改为 soft_path (= code_root/results/gs_generation/filename)
+            "data_dir": soft_path,
             "output_dir": ns_train_output_path,
         },
         # 专门用于衣服训练的 ns-train 配置（供 run_seg_clothes.sh 使用）
